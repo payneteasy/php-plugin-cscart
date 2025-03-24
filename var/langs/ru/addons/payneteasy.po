@@ -1,0 +1,160 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"POT-Creation-Date: \n"
+"PO-Revision-Date: \n"
+"Last-Translator: \n"
+"Language-Team: Russian\n"
+"Language: ru_RU\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 3.4.4\n"
+
+msgctxt "Addons::name::payneteasy"
+msgid "PaynetEasy Payment"
+msgstr "PaynetEasy Payment"
+
+msgctxt "Addons::description::payneteasy"
+msgid "Payneteasy payment gateway"
+msgstr "Payneteasy payment gateway"
+
+msgctxt "Languages::payneteasy_live_url_title"
+msgid "Gateway url (LIVE)"
+msgstr "Gateway url (LIVE)"
+
+msgctxt "Languages::payneteasy_live_url_desc"
+msgid "https://gate.payneteasy.com/ etc."
+msgstr "https://gate.payneteasy.com/ etc."
+
+msgctxt "Languages::payneteasy_sandbox_url_title"
+msgid "Gateway url (SANDBOX)"
+msgstr "Gateway url (SANDBOX)"
+
+msgctxt "Languages::payneteasy_sandbox_url_desc"
+msgid "https://sandbox.payneteasy.com/ etc."
+msgstr "https://sandbox.payneteasy.com/ etc."
+
+msgctxt "Languages::payneteasy_login_title"
+msgid "Login"
+msgstr "Login"
+
+msgctxt "Languages::payneteasy_login_desc"
+msgid "Merchant Login is required to call the API"
+msgstr "Merchant Login is required to call the API"
+
+msgctxt "Languages::payneteasy_control_key_title"
+msgid "Control key"
+msgstr "Control key"
+
+msgctxt "Languages::payneteasy_control_key_desc"
+msgid "Merchant Control key is required to call the API"
+msgstr "Merchant Control key is required to call the API"
+
+msgctxt "Languages::payneteasy_endpoint_id_title"
+msgid "Endpoint id"
+msgstr "Endpoint id"
+
+msgctxt "Languages::payneteasy_endpoint_id_desc"
+msgid "Merchant Endpoint id is required to call the API"
+msgstr "Merchant Endpoint id is required to call the API"
+
+msgctxt "Languages::payneteasy_payment_method_title"
+msgid "Payment method"
+msgstr "Payment method"
+
+msgctxt "Languages::payneteasy_sandbox_title"
+msgid "Sandbox mode"
+msgstr "Sandbox mode"
+
+msgctxt "Languages::payneteasy_sandbox_desc"
+msgid "In this mode, the payment for the goods is not charged."
+msgstr "In this mode, the payment for the goods is not charged."
+
+msgctxt "Languages::payneteasy_logging_title"
+msgid "Logging"
+msgstr "Logging"
+
+msgctxt "Languages::payneteasy_logging_desc"
+msgid "Logging is used to debug plugin performance by storing API request data."
+msgstr "Logging is used to debug plugin performance by storing API request data."
+
+msgctxt "Languages::payneteasy_three_d_secure_payment_title"
+msgid "3D Secure"
+msgstr "3D Secure"
+
+msgctxt "Languages::payneteasy_three_d_secure_payment_desc"
+msgid "3D Secure or Non 3D Secure (WORK ONLY WITH DIRECT INTEGRATION METHOD)"
+msgstr "3D Secure or Non 3D Secure (WORK ONLY WITH DIRECT INTEGRATION METHOD)"
+
+msgctxt "Languages::payneteasy_status.paid"
+msgid "Paid"
+msgstr "Paid"
+
+msgctxt "Languages::payneteasy_status.failed"
+msgid "Failed"
+msgstr "Failed"
+
+msgctxt "Languages::payneteasy_payment_received_but_not_confirmed"
+msgid "Payment received but not confirmed"
+msgstr "Payment received but not confirmed"
+
+msgctxt "Languages::payneteasy_payment_refunded"
+msgid "Payment refunded"
+msgstr "Payment refunded"
+
+msgctxt "Languages::payneteasy_payment_failed"
+msgid "Payment declined"
+msgstr "Payment declined"
+
+msgctxt "Languages::payneteasy_order_id_not_found"
+msgid "Order ID not found"
+msgstr "Order ID not found"
+
+msgctxt "Languages::payneteasy_empty_processor_params"
+msgid "Processor params is empty"
+msgstr "Processor params is empty"
+
+msgctxt "Languages::payneteasy_order_not_found"
+msgid "Order not found"
+msgstr "Order not found"
+
+msgctxt "Languages::payneteasy_failed_get_payment_url"
+msgid "Failed to get payment URL"
+msgstr "Failed to get payment URL"
+
+msgctxt "Languages::payneteasy_error_email_title"
+msgid "Check issuance error"
+msgstr "Check issuance error"
+
+msgctxt "Languages::payneteasy_delivery"
+msgid "Delivery"
+msgstr "Delivery"
+
+msgctxt "Languages::payneteasy_enabled"
+msgid "Enabled"
+msgstr "Enabled"
+
+msgctxt "Languages::payneteasy_disabled"
+msgid "Disabled"
+msgstr "Disabled"
+
+msgctxt "Languages::payneteasy_status_paid_title"
+msgid "Successful transaction order status"
+msgstr "Successful transaction order status"
+
+msgctxt "Languages::payneteasy_status_paid_desc"
+msgid "Select the order status to be displayed after successful payment"
+msgstr "Select the order status to be displayed after successful payment"
+
+msgctxt "Languages::payneteasy_status_failed_title"
+msgid "Unsuccessful transaction order status"
+msgstr "Unsuccessful transaction order status"
+
+msgctxt "Languages::payneteasy_status_failed_desc"
+msgid "Select the order status that will be displayed after a failed payment"
+msgstr "Select the order status that will be displayed after a failed payment"
+
+msgctxt "Languages::payneteasy_select_an_option"
+msgid "Select an option"
+msgstr "Выберите опцию"
