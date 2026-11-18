@@ -170,6 +170,20 @@ class Payneteasy
      */
     public function handleResponse(): void
     {
+        // The gateway returns the customer with a cross-site POST, which carries
+        // no SameSite=Lax session cookie. Answering it would replace the
+        // customer's session with an empty one and send them to the login page.
+        // Re-issue the request as a same-site GET without a new session cookie.
+        if ($this->mode === 'return' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+            header_remove('Set-Cookie');
+            header('Location: ' . fn_url(
+                'payment_notification.return?payment=payneteasy&merchant_order=' . (int) $this->order_id,
+                'C',
+                'current'
+            ), true, 303);
+            exit;
+        }
+
         try {
             // Если над заказом уже работает запрос, то останавливанм текущий
             $maxAttempts = 5;
