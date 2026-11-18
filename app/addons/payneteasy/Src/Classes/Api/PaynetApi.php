@@ -90,14 +90,14 @@ class PaynetApi extends Request
 
         if (!empty($error_message))
         {
-            throw new PayneteasyException($error_message, [
+            throw new PaynetException($error_message, [
                 'response' => $error_code
             ]);
         }
 
         if(empty($response))
         {
-            throw new PayneteasyException('Host response is empty', [
+            throw new PaynetException('Host response is empty', [
                 'response' => $response
             ]);
         }
@@ -106,7 +106,10 @@ class PaynetApi extends Request
 
         parse_str($response, $responseFields);
 
-        return $responseFields;
+        // The gateway separates fields with "\n&", so every value ends with a line break
+        return array_map(function ($value) {
+            return is_string($value) ? trim($value) : $value;
+        }, $responseFields);
 
     }
 
@@ -132,7 +135,7 @@ class PaynetApi extends Request
         $result = json_encode($data);
         $error = json_last_error();
         if ($error != JSON_ERROR_NONE) {
-            throw new PayneteasyException('JSON Error: ', [
+            throw new PaynetException('JSON Error: ', [
                 'response' => json_last_error_msg()
             ]);
         }
