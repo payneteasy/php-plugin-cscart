@@ -62,8 +62,11 @@ class PaynetApi extends Request
         (
             CURLOPT_HEADER         => 0,
             CURLOPT_USERAGENT      => 'Payneteasy-Client/1.0',
-            CURLOPT_SSL_VERIFYHOST => 0,
-            CURLOPT_SSL_VERIFYPEER => 0,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_PROTOCOLS      => CURLPROTO_HTTPS,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT        => 60,
             CURLOPT_POST           => 1,
             CURLOPT_RETURNTRANSFER => 1
         ));
