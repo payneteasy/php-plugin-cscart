@@ -90,10 +90,14 @@ class Payneteasy
     {
         $this->order_id = $order_id ?: '';
         if (empty($this->order_id)) {
-            $this->order_id = $_REQUEST['merchant_order'];
+            $this->order_id = (string) ($_REQUEST['merchant_order'] ?? $_REQUEST['client_orderid'] ?? '');
             if (!empty($order_info)) {
-                $this->order_id = $order_info['order_id'] ?? '';
+                $this->order_id = (string) ($order_info['order_id'] ?? '');
             }
+        }
+
+        if (!ctype_digit($this->order_id)) {
+            $this->order_id = '';
         }
 
         if (empty($this->order_id)) {
@@ -131,7 +135,19 @@ class Payneteasy
      */
     private function setProcessorParams(array $processor_data): void
     {
-        $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $_REQUEST['merchant_order']??$this->order_id);
+        $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $this->order_id);
+
+        // Notifications name the order themselves: only accept orders paid with this processor.
+        $processor_script = db_get_field(
+            'SELECT p.processor_script FROM ?:payments AS m'
+            . ' INNER JOIN ?:payment_processors AS p ON p.processor_id = m.processor_id'
+            . ' WHERE m.payment_id = ?i',
+            $payment_id
+        );
+        if ($processor_script !== 'payneteasy.php') {
+            throw new \Exception(__('payneteasy_empty_processor_params'));
+        }
+
         if (empty($this->processor_params) && !empty($payment_id) && $payment_method_data = fn_get_payment_method_data($payment_id)) {
             $this->processor_params = $payment_method_data['processor_params'];
         }
@@ -211,7 +227,7 @@ class Payneteasy
     {
         // Получаем актуальный статус платежа
         $payment_status_data = $this->getPaymentStatusData($this->order_id);
-        $payment_status = trim($payment_status_data['status']);
+        $payment_status = trim($payment_status_data['status'] ?? '');
         $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $this->order_id);
         if (empty($this->processor_params) && !empty($payment_id) && $payment_method_data = fn_get_payment_method_data($payment_id)) {
             $this->processor_params = $payment_method_data['processor_params'];
@@ -244,6 +260,17 @@ class Payneteasy
 
         $order_status_data = $available_statuses[$payment_status] ?? [];
 
+        // No final answer from the gateway (transport error, unknown order,
+        // unknown status): this is not a decline, leave the order as it is.
+        if (empty($order_status_data)) {
+            $this->logger->error(
+                __FUNCTION__ . ' > no usable payment status, order not changed: ', [
+                'order_id' => $this->order_id,
+                'status' => $payment_status
+            ]);
+            return;
+        }
+
 //        if (
 //            $payment_status !== 'refunded' &&
 //            isset($payment_status_data['refund_amount'])
@@ -256,6 +283,15 @@ class Payneteasy
 //        }
 
         $current_order_status = $this->getCurrentOrderStatus()?:$this->order_info['status'];
+
+        // Never downgrade a paid order, except for a refund.
+        if (
+            $current_order_status === $paid_status &&
+            $payment_status !== 'approved' &&
+            $payment_status !== 'refunded'
+        ) {
+            return;
+        }
 
         if (!empty($order_status_data)) {
             if ($current_order_status !== $order_status_data['order_status']) {
@@ -578,8 +614,12 @@ class Payneteasy
         $pp_response['order_status'] = $context['order_status'] ?? OrderStatuses::FAILED;
         $pp_response['reason_text'] = $context['reason_text'] ?? $e->getMessage();
 
-        // Finish payment and perform order placement routines.
-        $this->setOrUpdateOrderStatus($pp_response);
+        // A failed notification (bad order id, foreign order, gateway or network
+        // error) says nothing about the payment: only fail the order while
+        // placing it, never from a return or webhook request.
+        if (!in_array($this->mode, ['return', 'webhook'], true)) {
+            $this->setOrUpdateOrderStatus($pp_response);
+        }
 
         if ($this->mode === 'return') {
             $this->unpleasantEnding($pp_response['reason_text']);
