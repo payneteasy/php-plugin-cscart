@@ -503,8 +503,6 @@ class Payneteasy
             'cvv2' => $payneteasy_card_cvv??'',
         ];
 
-        // Store URLs come from the CS-Cart configuration, never from the request Host header.
-        $success_url = fn_url('checkout.complete?order_id=' . (int) $this->order_id, 'C', 'current');
 
         $data = [
             'client_orderid' => (string)$this->order_id,
@@ -525,8 +523,9 @@ class Payneteasy
             'expire_year' => $card_data['expire_year'],
             'first_name' => $this->order_info['firstname'],
             'last_name'  => $this->order_info['lastname'],
-//            'redirect_success_url' => $return_url,
-            'redirect_success_url' => $success_url,
+            // Return through the plugin, which asks the gateway for the status and
+            // then opens the order page, so the order is paid even without a callback.
+            'redirect_success_url' => $return_url,
             'redirect_fail_url' => $return_url,
             'redirect_url' => $return_url,
             'server_callback_url' => $return_url,
