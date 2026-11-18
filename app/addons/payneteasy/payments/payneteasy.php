@@ -790,12 +790,26 @@ class Payneteasy
 }
 
 
-$paynet = new Payneteasy(
-    $order_id ?? '',
-    $order_info ?? [],
-    $processor_data ?? [],
-    $mode ?? ''
-);
+try {
+    $paynet = new Payneteasy(
+        $order_id ?? '',
+        $order_info ?? [],
+        $processor_data ?? [],
+        $mode ?? ''
+    );
+} catch (\Exception $e) {
+    // Unknown order, an order of another payment method, missing settings:
+    // the error is already logged. Do not answer a notification with a 500.
+    if (!defined('PAYMENT_NOTIFICATION')) {
+        throw $e;
+    }
+    if (($mode ?? '') === 'return') {
+        fn_set_notification('E', __('error'), __('payneteasy_order_not_found'));
+        fn_redirect(fn_url('', 'C', 'current'));
+    }
+    http_response_code(400);
+    die('error');
+}
 
 if (defined('PAYMENT_NOTIFICATION')) {
     // Handle payment response based on the provided mode.
