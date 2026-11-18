@@ -432,10 +432,6 @@ class Payneteasy
         try {
             $pay_url_response = $this->getPayUrl();
             $payment_status_data = $this->getPaymentStatusData($this->order_id);
-            $protocol = empty($_SERVER['HTTPS']) ? 'http' : 'https';
-            $host = $_SERVER['HTTP_HOST'];
-            $success_url = "{$protocol}://{$host}/index.php?dispatch=checkout.complete&order_id=".$this->order_id;
-            $return_url = $this->getReturnUrl();
             // Check if the payment link was successfully retrieved.
             if (empty($pay_url_response)) {
                 throw new \Exception(__('payneteasy_failed_get_payment_url'));
@@ -507,10 +503,8 @@ class Payneteasy
             'cvv2' => $payneteasy_card_cvv??'',
         ];
 
-        $protocol = empty($_SERVER['HTTPS']) ? 'http' : 'https';
-        $host = $_SERVER['HTTP_HOST'];
-
-        $success_url = "{$protocol}://{$host}/index.php?dispatch=checkout.complete&order_id=".$this->order_id;
+        // Store URLs come from the CS-Cart configuration, never from the request Host header.
+        $success_url = fn_url('checkout.complete?order_id=' . (int) $this->order_id, 'C', 'current');
 
         $data = [
             'client_orderid' => (string)$this->order_id,
@@ -725,10 +719,7 @@ class Payneteasy
      */
     private function getReturnUrl(): string
     {
-        $protocol = empty($_SERVER['HTTPS']) ? 'http' : 'https';
-        $host = $_SERVER['HTTP_HOST'];
-
-        return "{$protocol}://{$host}/index.php?dispatch=payment_notification.return&payment=payneteasy";
+        return fn_url('payment_notification.return?payment=payneteasy', 'C', 'current');
     }
 
 
