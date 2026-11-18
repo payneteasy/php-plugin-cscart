@@ -90,10 +90,14 @@ class Payneteasy
     {
         $this->order_id = $order_id ?: '';
         if (empty($this->order_id)) {
-            $this->order_id = $_REQUEST['merchant_order'];
+            $this->order_id = (string) ($_REQUEST['merchant_order'] ?? $_REQUEST['client_orderid'] ?? '');
             if (!empty($order_info)) {
-                $this->order_id = $order_info['order_id'] ?? '';
+                $this->order_id = (string) ($order_info['order_id'] ?? '');
             }
+        }
+
+        if (!ctype_digit($this->order_id)) {
+            $this->order_id = '';
         }
 
         if (empty($this->order_id)) {
@@ -131,7 +135,19 @@ class Payneteasy
      */
     private function setProcessorParams(array $processor_data): void
     {
-        $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $_REQUEST['merchant_order']??$this->order_id);
+        $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $this->order_id);
+
+        // Notifications name the order themselves: only accept orders paid with this processor.
+        $processor_script = db_get_field(
+            'SELECT p.processor_script FROM ?:payments AS m'
+            . ' INNER JOIN ?:payment_processors AS p ON p.processor_id = m.processor_id'
+            . ' WHERE m.payment_id = ?i',
+            $payment_id
+        );
+        if ($processor_script !== 'payneteasy.php') {
+            throw new \Exception(__('payneteasy_empty_processor_params'));
+        }
+
         if (empty($this->processor_params) && !empty($payment_id) && $payment_method_data = fn_get_payment_method_data($payment_id)) {
             $this->processor_params = $payment_method_data['processor_params'];
         }
@@ -154,6 +170,20 @@ class Payneteasy
      */
     public function handleResponse(): void
     {
+        // The gateway returns the customer with a cross-site POST, which carries
+        // no SameSite=Lax session cookie. Answering it would replace the
+        // customer's session with an empty one and send them to the login page.
+        // Re-issue the request as a same-site GET without a new session cookie.
+        if ($this->mode === 'return' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+            header_remove('Set-Cookie');
+            header('Location: ' . fn_url(
+                'payment_notification.return?payment=payneteasy&merchant_order=' . (int) $this->order_id,
+                'C',
+                'current'
+            ), true, 303);
+            exit;
+        }
+
         try {
             // Если над заказом уже работает запрос, то останавливанм текущий
             $maxAttempts = 5;
@@ -211,7 +241,7 @@ class Payneteasy
     {
         // Получаем актуальный статус платежа
         $payment_status_data = $this->getPaymentStatusData($this->order_id);
-        $payment_status = trim($payment_status_data['status']);
+        $payment_status = trim($payment_status_data['status'] ?? '');
         $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $this->order_id);
         if (empty($this->processor_params) && !empty($payment_id) && $payment_method_data = fn_get_payment_method_data($payment_id)) {
             $this->processor_params = $payment_method_data['processor_params'];
@@ -244,6 +274,17 @@ class Payneteasy
 
         $order_status_data = $available_statuses[$payment_status] ?? [];
 
+        // No final answer from the gateway (transport error, unknown order,
+        // unknown status): this is not a decline, leave the order as it is.
+        if (empty($order_status_data)) {
+            $this->logger->error(
+                __FUNCTION__ . ' > no usable payment status, order not changed: ', [
+                'order_id' => $this->order_id,
+                'status' => $payment_status
+            ]);
+            return;
+        }
+
 //        if (
 //            $payment_status !== 'refunded' &&
 //            isset($payment_status_data['refund_amount'])
@@ -256,6 +297,15 @@ class Payneteasy
 //        }
 
         $current_order_status = $this->getCurrentOrderStatus()?:$this->order_info['status'];
+
+        // Never downgrade a paid order, except for a refund.
+        if (
+            $current_order_status === $paid_status &&
+            $payment_status !== 'approved' &&
+            $payment_status !== 'refunded'
+        ) {
+            return;
+        }
 
         if (!empty($order_status_data)) {
             if ($current_order_status !== $order_status_data['order_status']) {
@@ -396,10 +446,6 @@ class Payneteasy
         try {
             $pay_url_response = $this->getPayUrl();
             $payment_status_data = $this->getPaymentStatusData($this->order_id);
-            $protocol = empty($_SERVER['HTTPS']) ? 'http' : 'https';
-            $host = $_SERVER['HTTP_HOST'];
-            $success_url = "{$protocol}://{$host}/index.php?dispatch=checkout.complete&order_id=".$this->order_id;
-            $return_url = $this->getReturnUrl();
             // Check if the payment link was successfully retrieved.
             if (empty($pay_url_response)) {
                 throw new \Exception(__('payneteasy_failed_get_payment_url'));
@@ -471,10 +517,6 @@ class Payneteasy
             'cvv2' => $payneteasy_card_cvv??'',
         ];
 
-        $protocol = empty($_SERVER['HTTPS']) ? 'http' : 'https';
-        $host = $_SERVER['HTTP_HOST'];
-
-        $success_url = "{$protocol}://{$host}/index.php?dispatch=checkout.complete&order_id=".$this->order_id;
 
         $data = [
             'client_orderid' => (string)$this->order_id,
@@ -495,8 +537,9 @@ class Payneteasy
             'expire_year' => $card_data['expire_year'],
             'first_name' => $this->order_info['firstname'],
             'last_name'  => $this->order_info['lastname'],
-//            'redirect_success_url' => $return_url,
-            'redirect_success_url' => $success_url,
+            // Return through the plugin, which asks the gateway for the status and
+            // then opens the order page, so the order is paid even without a callback.
+            'redirect_success_url' => $return_url,
             'redirect_fail_url' => $return_url,
             'redirect_url' => $return_url,
             'server_callback_url' => $return_url,
@@ -578,8 +621,12 @@ class Payneteasy
         $pp_response['order_status'] = $context['order_status'] ?? OrderStatuses::FAILED;
         $pp_response['reason_text'] = $context['reason_text'] ?? $e->getMessage();
 
-        // Finish payment and perform order placement routines.
-        $this->setOrUpdateOrderStatus($pp_response);
+        // A failed notification (bad order id, foreign order, gateway or network
+        // error) says nothing about the payment: only fail the order while
+        // placing it, never from a return or webhook request.
+        if (!in_array($this->mode, ['return', 'webhook'], true)) {
+            $this->setOrUpdateOrderStatus($pp_response);
+        }
 
         if ($this->mode === 'return') {
             $this->unpleasantEnding($pp_response['reason_text']);
@@ -685,10 +732,7 @@ class Payneteasy
      */
     private function getReturnUrl(): string
     {
-        $protocol = empty($_SERVER['HTTPS']) ? 'http' : 'https';
-        $host = $_SERVER['HTTP_HOST'];
-
-        return "{$protocol}://{$host}/index.php?dispatch=payment_notification.return&payment=payneteasy";
+        return fn_url('payment_notification.return?payment=payneteasy', 'C', 'current');
     }
 
 
