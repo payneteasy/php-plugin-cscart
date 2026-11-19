@@ -274,6 +274,25 @@ class Payneteasy
 
         $order_status_data = $available_statuses[$payment_status] ?? [];
 
+        // An approved sale counts only for the amount and currency of this order.
+        if ($payment_status === 'approved' && !$this->isPaidInFull($payment_status_data)) {
+            $this->logger->error(
+                __FUNCTION__ . ' > approved amount does not match the order, order not changed: ', [
+                'order_id' => $this->order_id,
+                'amount' => $payment_status_data['amount'] ?? '',
+                'currency' => $payment_status_data['currency'] ?? ''
+            ]);
+            // Keep the order visible to the merchant (Open), but not paid.
+            $current_order_status = $this->getCurrentOrderStatus()?:$this->order_info['status'];
+            if ($current_order_status !== $paid_status) {
+                $this->setOrUpdateOrderStatus([
+                    'order_status' => 'O',
+                    'reason_text' => 'Paid amount does not match the order'
+                ]);
+            }
+            return;
+        }
+
         // No final answer from the gateway (transport error, unknown order,
         // unknown status): this is not a decline, leave the order as it is.
         if (empty($order_status_data)) {
@@ -503,6 +522,13 @@ class Payneteasy
         $amount = $this->getAmount();
         $return_url = $this->getReturnUrl();
 
+        // Remember what the customer is asked to pay, to check the approved sale later.
+        fn_update_order_payment_info($this->order_id, [
+            'paynet_amount' => $amount,
+            'paynet_currency' => $this->getCurrency(),
+            'paynet_base_total' => number_format((float) $this->order_info['total'], 2, '.', ''),
+        ]);
+
         $payneteasy_card_number       = $this->order_info['payment_info']['card_number']??'';
         $payneteasy_card_expiry_month = $this->order_info['payment_info']['expiry_month']??'';
         $payneteasy_card_expiry_year  = $this->order_info['payment_info']['expiry_year']??'';
@@ -522,7 +548,7 @@ class Payneteasy
             'client_orderid' => (string)$this->order_id,
             'order_desc' => 'Order # ' . $this->order_id,
             'amount' => $amount,
-            'currency' => $this->order_info['secondary_currency'],
+            'currency' => $this->getCurrency(),
             'address1' => $this->order_info['b_address']?:$this->order_info['s_address'],
             'city' => $this->order_info['b_city']?:$this->order_info['s_city'],
             'zip_code' => $this->order_info['b_zipcode']?:$this->order_info['s_zipcode'],
@@ -720,11 +746,48 @@ class Payneteasy
     private function getAmount(): string
     {
         $total = (float) $this->order_info['total'];
-        $currency = $this->order_info['secondary_currency'] ?? CART_PRIMARY_CURRENCY;
+        $currency = $this->getCurrency();
         if ($currency !== CART_PRIMARY_CURRENCY) {
             $total = (float) fn_format_price_by_currency($total, CART_PRIMARY_CURRENCY, $currency);
         }
         return number_format($total, 2, '.', '');
+    }
+
+
+    private function getCurrency(): string
+    {
+        return $this->order_info['secondary_currency'] ?? CART_PRIMARY_CURRENCY;
+    }
+
+
+    /**
+     * Whether the gateway sale covers this order: same currency and amount.
+     *
+     * The amount sent to the gateway is used while the order total is unchanged,
+     * so a later exchange rate change does not matter.
+     */
+    private function isPaidInFull(array $payment_status_data): bool
+    {
+        $payment_info = $this->order_info['payment_info'] ?? [];
+        $total = number_format((float) $this->order_info['total'], 2, '.', '');
+
+        if (
+            isset($payment_info['paynet_amount'], $payment_info['paynet_currency'], $payment_info['paynet_base_total']) &&
+            $payment_info['paynet_base_total'] === $total
+        ) {
+            $expected_amount = $payment_info['paynet_amount'];
+            $expected_currency = $payment_info['paynet_currency'];
+        } else {
+            $expected_amount = $this->getAmount();
+            $expected_currency = $this->getCurrency();
+        }
+
+        $paid_amount = trim((string) ($payment_status_data['amount'] ?? ''));
+        $paid_currency = strtoupper(trim((string) ($payment_status_data['currency'] ?? '')));
+
+        return is_numeric($paid_amount)
+            && $paid_currency === strtoupper($expected_currency)
+            && (int) round((float) $paid_amount * 100) === (int) round((float) $expected_amount * 100);
     }
 
 
