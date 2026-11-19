@@ -609,6 +609,7 @@ class Payneteasy
                 'merchant_order_id' => $response['merchant-order-id'],
             );
 
+        $this->ensurePaymentsTable();
         db_query('INSERT INTO ?:payneteasy_payments ?e', $order_data);
 
         return $response;
@@ -741,6 +742,18 @@ class Payneteasy
             $total = (float) fn_format_price_by_currency($total, CART_PRIMARY_CURRENCY, $currency);
         }
         return number_format($total, 2, '.', '');
+    }
+
+
+    /**
+     * Gateway ids do not fit into int: widen the column of tables created by older versions.
+     */
+    private function ensurePaymentsTable(): void
+    {
+        $column = db_get_row("SHOW COLUMNS FROM ?:payneteasy_payments LIKE 'paynet_order_id'");
+        if (!empty($column) && stripos($column['Type'], 'bigint') !== 0) {
+            db_query('ALTER TABLE ?:payneteasy_payments MODIFY paynet_order_id bigint unsigned NOT NULL');
+        }
     }
 
 

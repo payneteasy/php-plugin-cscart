@@ -33,7 +33,7 @@ function fn_payneteasy_install()
         db_query('UPDATE ?:payment_processors SET ?u WHERE processor_id = ?i', $processor_data, $processor_id);
     }
 
-    db_query('CREATE TABLE ?:payneteasy_payments (paynet_order_id int NOT NULL, merchant_order_id int NOT NULL)');
+    db_query('CREATE TABLE IF NOT EXISTS ?:payneteasy_payments (paynet_order_id bigint unsigned NOT NULL, merchant_order_id int NOT NULL)');
 }
 
 
