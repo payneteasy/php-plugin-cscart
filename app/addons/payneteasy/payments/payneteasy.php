@@ -711,17 +711,20 @@ class Payneteasy
 
 
     /**
-     * Calculate the payment amount based on order information and processor parameters.
+     * Order total in the order currency (secondary_currency), the one sent to the gateway.
      *
-     * @return float The calculated payment amount.
+     * CS-Cart keeps order totals in the primary currency.
+     *
+     * @return string The payment amount with two decimals.
      */
-    private function getAmount(): float
+    private function getAmount(): string
     {
-        $discount = $this->order_info['total'] - $this->order_info['subtotal'];
-        if ($discount === $this->order_info['subtotal_discount']) {
-            return $this->order_info['subtotal'];
+        $total = (float) $this->order_info['total'];
+        $currency = $this->order_info['secondary_currency'] ?? CART_PRIMARY_CURRENCY;
+        if ($currency !== CART_PRIMARY_CURRENCY) {
+            $total = (float) fn_format_price_by_currency($total, CART_PRIMARY_CURRENCY, $currency);
         }
-        return $this->order_info['total'];
+        return number_format($total, 2, '.', '');
     }
 
 
@@ -776,7 +779,7 @@ class Payneteasy
         $base = '';
         $base .= $endpointId;
         $base .= $data['client_orderid'];
-        $base .= $data['amount'] * 100;
+        $base .= (int) round($data['amount'] * 100);
         $base .= $data['email'];
 
         return $this->signString($base, $merchantControl);
