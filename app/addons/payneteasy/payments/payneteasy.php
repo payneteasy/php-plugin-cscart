@@ -470,40 +470,27 @@ class Payneteasy
                 throw new \Exception(__('payneteasy_failed_get_payment_url'));
             }
 
-            if (trim($payment_status_data['status']) == 'processing') {
+            $status = trim($payment_status_data['status'] ?? '');
+
+            if ($status === 'processing') {
                 if ($this->processor_params['payment_method'] == 'form') {
                     fn_create_payment_form($pay_url_response['redirect-url'], [], 'Payneteasy', true, 'GET');
-                } elseif ($this->processor_params['payment_method'] == 'direct') {
-                    if ($this->processor_params['three_d_secure_payment']) {
-                        echo $payment_status_data['html'];
-                    }
+                } elseif (!empty($payment_status_data['html'])) {
+                    // 3-D Secure page from the gateway
+                    echo $payment_status_data['html'];
+                } else {
+                    // Still in progress: the callback or the return sets the final status.
+                    fn_order_placement_routines('route', $this->order_id, false);
                 }
-            } elseif (trim($payment_status_data['status']) == 'approved') {
-                $pp_response = array(
-                    'order_status' => 'C',
-                    'reason_text' => trim($payment_status_data['status']),
-                    'ip_address' => '',
-                );
-                fn_finish_payment($this->order_id, $pp_response);
-                fn_order_placement_routines('route', $this->order_id, false);
-            } elseif (trim($payment_status_data['status']) == 'error') {
-                $pp_response = array(
-                    'order_status' => 'F',
-                    'reason_text' => trim($payment_status_data['status']),
-                    'ip_address' => '',
-                );
-                fn_finish_payment($this->order_id, $pp_response);
-                fn_order_placement_routines('route', $this->order_id, false);
-                $this->unpleasantEnding(trim($payment_status_data['error-message']));
-            } elseif (trim($payment_status_data['status']) == 'declined') {
-                $pp_response = array(
-                    'order_status' => 'F',
-                    'reason_text' => trim($payment_status_data['status']),
-                    'ip_address' => '',
-                );
-                fn_finish_payment($this->order_id, $pp_response);
-                fn_order_placement_routines('route', $this->order_id, false);
-                $this->unpleasantEnding(trim($payment_status_data['error-message']));
+            } elseif (in_array($status, ['approved', 'declined', 'error'], true)) {
+                // Same rules as for the callback: configured statuses, amount check.
+                $this->changePaymentStatus();
+                $current_order_status = $this->getCurrentOrderStatus() ?: $this->order_info['status'];
+                if ($current_order_status === $this->processor_params['statuses']['failed']) {
+                    $this->unpleasantEnding(trim($payment_status_data['error-message'] ?? ''));
+                } else {
+                    fn_order_placement_routines('route', $this->order_id, false);
+                }
             }
 
         } catch (\Exception | PaynetException $e) {
@@ -528,6 +515,9 @@ class Payneteasy
             'paynet_currency' => $this->getCurrency(),
             'paynet_base_total' => number_format((float) $this->order_info['total'], 2, '.', ''),
         ]);
+        $this->order_info['payment_info']['paynet_amount'] = $amount;
+        $this->order_info['payment_info']['paynet_currency'] = $this->getCurrency();
+        $this->order_info['payment_info']['paynet_base_total'] = number_format((float) $this->order_info['total'], 2, '.', '');
 
         $payneteasy_card_number       = $this->order_info['payment_info']['card_number']??'';
         $payneteasy_card_expiry_month = $this->order_info['payment_info']['expiry_month']??'';
