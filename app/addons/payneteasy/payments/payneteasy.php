@@ -406,47 +406,79 @@ class Payneteasy
      */
     private function getPaymentStatusData($order_id): array
     {
+        $order_id = $this->order_id ?? $order_id;
+
         // Logging input
         $this->logger->debug(
             __FUNCTION__ . ' > getOrderInfo - INPUT: ', [
             'arguments' => [
-                'order_id' => $this->order_id??$order_id,
+                'order_id' => $order_id,
             ]
         ]);
 
-        $paynet_order_id = db_get_field('SELECT paynet_order_id FROM ?:payneteasy_payments WHERE merchant_order_id = ?s', $this->order_id??$order_id);
-
-        $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $this->order_id??$order_id);
+        $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $order_id);
         if (!empty($payment_id) && $payment_method_data = fn_get_payment_method_data($payment_id)) {
             $this->processor_params = $payment_method_data['processor_params'];
         }
-
-        $data = [
-            'login' => $this->processor_params['login'],
-            'client_orderid' => (string)$this->order_id?:$order_id,
-            'orderid' => $paynet_order_id,
-        ];
-        $data['control'] = $this->signStatusRequest($data, $this->processor_params['login'], $this->processor_params['control_key']);
 
         $action_url = $this->processor_params['live_url'];
         if ($this->processor_params['sandbox'])
             $action_url = $this->processor_params['sandbox_url'];
 
-        $response = $this->getPaynetApi()->status(
-            $data,
-            $this->processor_params['payment_method'],
-            $this->processor_params['sandbox'],
-            $action_url,
-            $this->processor_params['endpoint_id']
+        // A customer may pay again after a declined attempt, or in another tab:
+        // check all attempts of the order, newest first. An approved attempt wins,
+        // then a processing one, otherwise the latest attempt.
+        $this->ensurePaymentsTable();
+        $attempts = db_get_fields(
+            'SELECT paynet_order_id FROM ?:payneteasy_payments WHERE merchant_order_id = ?i ORDER BY id DESC LIMIT 20',
+            $order_id
         );
 
-        // Logging output
-        $this->logger->debug(
-            __FUNCTION__ . ' > getOrderInfo - OUTPUT: ', [
-            'response' => $response
-        ]);
+        $latest = null;
+        $processing = null;
+        $response = [];
 
-        return $response;
+        foreach ($attempts ?: [''] as $paynet_order_id) {
+            $data = [
+                'login' => $this->processor_params['login'],
+                'client_orderid' => (string)$order_id,
+                'orderid' => (string)$paynet_order_id,
+            ];
+            $data['control'] = $this->signStatusRequest($data, $this->processor_params['login'], $this->processor_params['control_key']);
+
+            $attempt = $this->getPaynetApi()->status(
+                $data,
+                $this->processor_params['payment_method'],
+                $this->processor_params['sandbox'],
+                $action_url,
+                $this->processor_params['endpoint_id']
+            );
+
+            // Logging output
+            $this->logger->debug(
+                __FUNCTION__ . ' > getOrderInfo - OUTPUT: ', [
+                'paynet_order_id' => $paynet_order_id,
+                'response' => $attempt
+            ]);
+
+            // The gateway answers for any transaction id: use only answers for this order
+            if (isset($attempt['merchant-order-id']) && trim((string)$attempt['merchant-order-id']) !== (string)$order_id) {
+                continue;
+            }
+
+            $status = trim((string)($attempt['status'] ?? ''));
+            if ($status === 'approved') {
+                return $attempt;
+            }
+            if ($status === 'processing' && $processing === null) {
+                $processing = $attempt;
+            }
+            if ($latest === null) {
+                $latest = $attempt;
+            }
+        }
+
+        return $processing ?? $latest ?? $response;
     }
 
 
@@ -603,14 +635,15 @@ class Payneteasy
             'response' => $response
         ]);
 
-        $order_data =
-            array(
-                'paynet_order_id' => $response['paynet-order-id'],
-                'merchant_order_id' => $response['merchant-order-id'],
-            );
-
-        $this->ensurePaymentsTable();
-        db_query('INSERT INTO ?:payneteasy_payments ?e', $order_data);
+        // A refused request has no gateway payment id: nothing to remember
+        $paynet_order_id = trim((string)($response['paynet-order-id'] ?? ''));
+        if (ctype_digit($paynet_order_id)) {
+            $this->ensurePaymentsTable();
+            db_query('INSERT INTO ?:payneteasy_payments ?e', [
+                'paynet_order_id' => $paynet_order_id,
+                'merchant_order_id' => (int)$this->order_id,
+            ]);
+        }
 
         return $response;
     }
@@ -750,9 +783,20 @@ class Payneteasy
      */
     private function ensurePaymentsTable(): void
     {
+        static $checked = false;
+        if ($checked) {
+            return;
+        }
+        $checked = true;
+
         $column = db_get_row("SHOW COLUMNS FROM ?:payneteasy_payments LIKE 'paynet_order_id'");
         if (!empty($column) && stripos($column['Type'], 'bigint') !== 0) {
             db_query('ALTER TABLE ?:payneteasy_payments MODIFY paynet_order_id bigint unsigned NOT NULL');
+        }
+
+        // Attempts are read newest first: give every row an id
+        if (!db_get_row("SHOW COLUMNS FROM ?:payneteasy_payments LIKE 'id'")) {
+            db_query('ALTER TABLE ?:payneteasy_payments ADD id int unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST, ADD INDEX merchant_order_id (merchant_order_id)');
         }
     }
 
