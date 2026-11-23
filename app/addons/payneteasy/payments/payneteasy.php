@@ -37,7 +37,7 @@ class Payneteasy
 
 
     /**
-     * Инициализация свойств, обязательных для обработки платежа
+     * Initializes the properties required to process the payment
      *
      * @param string  $order_id        The order ID.
      * @param array   $order_info      Order information, including order details.
@@ -52,7 +52,7 @@ class Payneteasy
     ) {
         try {
 
-            // Устанавливаем order_id
+            // Set order_id
             $this->setOrderId($order_id, $order_info);
 
             $this->setOrderInfo($order_info);
@@ -79,7 +79,7 @@ class Payneteasy
 
 
     /**
-     * Получаем и устанавливаем свойство order_id.
+     * Gets and sets the order_id property.
      *
      * @param string  $order_id    The order ID.
      * @param array   $order_info  Order information, including order details.
@@ -107,7 +107,7 @@ class Payneteasy
 
 
     /**
-     * Получаем и устанавливаем свойство order_info.
+     * Gets and sets the order_info property.
      *
      * @param array $order_info  Order information, including order details.
      *
@@ -126,7 +126,7 @@ class Payneteasy
 
 
     /**
-     * Получаем и устанавливаем свойство processor_params.
+     * Gets and sets the processor_params property.
      *
      * @param array $processor_data  Processor data, including payment parameters.
      *
@@ -185,7 +185,7 @@ class Payneteasy
         }
 
         try {
-            // Если над заказом уже работает запрос, то останавливанм текущий
+            // If another request is already processing the order, stop this one
             $maxAttempts = 5;
             for ($i = 0; $i < $maxAttempts; $i++) {
                 $this->setOrderInfo([]);
@@ -207,8 +207,8 @@ class Payneteasy
             if ($this->mode === 'return') {
                 $current_order_status = $this->getCurrentOrderStatus()?:$this->order_info['status'];
 
-                // Если статус ошибки или возврата,
-                // то очищаем корзину и редиректим на главную
+                // On an error or refund status
+                // clear the cart and redirect to the home page
                 switch ($current_order_status) {
                   case $this->processor_params['statuses']['failed']:
                   case 'E':
@@ -233,13 +233,13 @@ class Payneteasy
 
 
     /**
-     * Получение данные для закрытия платежа
+     * Gets the data for closing the payment
      *
      * @return void
      */
     private function changePaymentStatus(): void
     {
-        // Получаем актуальный статус платежа
+        // Get the current payment status
         $payment_status_data = $this->getPaymentStatusData($this->order_id);
         $payment_status = trim($payment_status_data['status'] ?? '');
         $payment_id = db_get_field("SELECT payment_id FROM ?:orders WHERE order_id = ?i", $this->order_id);
@@ -308,7 +308,7 @@ class Payneteasy
 //            $payment_status !== 'refunded' &&
 //            isset($payment_status_data['refund_amount'])
 //        ) {
-//            // Указываем статус возврата
+//            // Set the refund status
 //            $context['order_status'] = 'E';
 //            $context['reason_text'] = __('payneteasy_payment_refunded');
 //
@@ -351,8 +351,8 @@ class Payneteasy
 
 
     /**
-     * Отправляем запрос на возврат в PAYNET, возвращвем результат запроса и логируем входящие и выходящие данные.
-     * Если запрос прошёл успешно, то и в CMS отображаем информацию о возврате.
+     * Sends a refund request to PAYNET, returns the result and logs the request and response data.
+     * If the request succeeds, the refund is also shown in the CMS.
      *
      * @return array
      */
@@ -400,7 +400,7 @@ class Payneteasy
 
 
     /**
-     * Получение статуса заказа из PAYNET API.
+     * Gets the order status from the PAYNET API.
      *
      * @return array
      */
@@ -532,9 +532,9 @@ class Payneteasy
 
 
     /**
-     * Получает URL-адрес платежа для перенаправления.
+     * Gets the payment URL for the redirect.
      *
-     * @return string URL-адрес платежа.
+     * @return string Payment URL.
      */
     private function getPayUrl()
     {
@@ -650,7 +650,7 @@ class Payneteasy
 
 
     /**
-     * Сценарий, выполняемый после отлова исключения
+     * Runs after an exception is caught
      *
      * @return void
      */
@@ -688,9 +688,9 @@ class Payneteasy
 
 
     /**
-     * Очищаем корзину, устанавливаем текст ошибки и редиректим на главную
+     * Clears the cart, sets the error text and redirects to the home page
      *
-     * @param string $reason_text Текст ошибки
+     * @param string $reason_text Error text
      *
      * @return void
      */
@@ -703,9 +703,9 @@ class Payneteasy
 
 
     /**
-     * Устанавливаем или обновляем итоговый статус заказа
+     * Sets or updates the final order status
      *
-     * @param array $pp_response Данный заказ для обновления
+     * @param array $pp_response Order data for the update
      *
      * @return void
      */
@@ -732,7 +732,7 @@ class Payneteasy
 
 
     /**
-     * Получает текущий статус заказа
+     * Gets the current order status
      *
      * @return string
      */
@@ -850,9 +850,9 @@ class Payneteasy
 
 
     /**
-     * Инициализация и настройка объекта класса PaynetLogger.
+     * Creates and configures the PaynetLogger object.
      *
-     * Эта функция инициализирует и настраивает логгер, используемый плагином Paynet для ведения журнала.
+     * This function sets up the logger the Paynet plugin writes its log with.
      *
      * @return void
      */
