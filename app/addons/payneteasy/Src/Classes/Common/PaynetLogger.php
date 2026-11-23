@@ -133,14 +133,14 @@ class PaynetLogger
                 $this->writeToFile($message);
             }
         } catch (\Exception | PaynetException $e) {
-            // Обработка ошибки записи в файл
+            // Handle a file write error
             error_log($e->getMessage());
         }
     }
 
 
     /**
-     * Простая запись в файл.
+     * Plain write to the file.
      *
      * @param string $message The log message.
      *

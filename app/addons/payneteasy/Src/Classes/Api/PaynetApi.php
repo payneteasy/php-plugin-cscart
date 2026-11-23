@@ -9,7 +9,7 @@ use \Src\Classes\Common\Request,
     \Src\Classes\Exception\PaynetException;
 
 /**
- * Класс PaynetApi предоставляет методы для взаимодействия с API PAYNET.
+ * The PaynetApi class provides methods for the PAYNET API.
  */
 class PaynetApi extends Request
 {
