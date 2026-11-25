@@ -68,7 +68,7 @@ class Payneteasy
         } catch (\Exception $e) {
             // Handle exception and log error
             $this->logger->error(sprintf(
-                __FUNCTION__ . ' > VtbPay exception : %s;',
+                __FUNCTION__ . ' > PaynetEasy exception : %s;',
                 $e->getMessage()
             ));
 
@@ -565,6 +565,16 @@ class Payneteasy
             'cvv2' => $payneteasy_card_cvv??'',
         ];
 
+        // The card is used for this request only: before it is sent, the stored
+        // copy keeps the last four digits and no CVV, whatever the result is.
+        if ($payneteasy_card_number !== '' || $payneteasy_card_cvv !== '') {
+            $digits = preg_replace('/\D/', '', (string) $payneteasy_card_number);
+            fn_update_order_payment_info($this->order_id, [
+                'card_number' => $digits === '' ? '' : str_repeat('X', max(strlen($digits) - 4, 0)) . substr($digits, -4),
+                'cvv2' => $payneteasy_card_cvv === '' ? '' : 'XXX',
+            ]);
+        }
+
 
         $data = [
             'client_orderid' => (string)$this->order_id,
@@ -673,8 +683,8 @@ class Payneteasy
 
         // A failed notification (bad order id, foreign order, gateway or network
         // error) says nothing about the payment: only fail the order while
-        // placing it, never from a return or webhook request.
-        if (!in_array($this->mode, ['return', 'webhook'], true)) {
+        // placing it, never from a notification request of any mode.
+        if (!defined('PAYMENT_NOTIFICATION')) {
             $this->setOrUpdateOrderStatus($pp_response);
         }
 
