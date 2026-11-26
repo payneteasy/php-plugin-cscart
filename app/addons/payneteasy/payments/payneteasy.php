@@ -185,34 +185,23 @@ class Payneteasy
         }
 
         try {
-            // If another request is already processing the order, stop this one
-            $maxAttempts = 5;
-            for ($i = 0; $i < $maxAttempts; $i++) {
-                $this->setOrderInfo([]);
-                if (!($this->order_info['payment_info']['paynet_query_running'] ?? false)) {
-                    break;
-                }
-                sleep(1);
+            // One request at a time changes the order. A request that cannot get
+            // the lock changes nothing: the customer sees the order as it is,
+            // the gateway is asked to repeat the notification.
+            if (!$this->changePaymentStatusLocked() && $this->mode === 'webhook') {
+                http_response_code(503);
+                die('busy');
             }
-            fn_update_order_payment_info($this->order_id, [
-                'paynet_query_running' => 1
-            ]);
-
-            $this->changePaymentStatus();
-
-            fn_update_order_payment_info($this->order_id, [
-                'paynet_query_running' => 0
-            ]);
 
             if ($this->mode === 'return') {
-                $current_order_status = $this->getCurrentOrderStatus()?:$this->order_info['status'];
+                $current_order_status = $this->getCurrentOrderStatus();
 
                 // On an error or refund status
                 // clear the cart and redirect to the home page
                 switch ($current_order_status) {
                   case $this->processor_params['statuses']['failed']:
                   case 'E':
-                      $this->unpleasantEnding($this->order_info['payment_info']['reason_text']);
+                      $this->unpleasantEnding((string) ($this->order_info['payment_info']['reason_text'] ?? ''));
                       break;
                   default:
                       fn_order_placement_routines('route', $this->order_id, false);
@@ -224,11 +213,50 @@ class Payneteasy
             }
 
         } catch (\Exception | PaynetException $e) {
-            fn_update_order_payment_info($this->order_id, [
-                'paynet_query_running' => 0
-            ]);
             $this->executeErrorScenario($e);
         }
+    }
+
+
+    /**
+     * Changes the order status under a lock of this order.
+     *
+     * @return bool False when another request holds the lock and nothing was done
+     */
+    private function changePaymentStatusLocked(): bool
+    {
+        $lock_name = $this->getOrderLockName();
+
+        // The lock belongs to the database connection, so it is also released
+        // when the request ends in any other way.
+        if ((int) db_get_field('SELECT GET_LOCK(?s, ?i)', $lock_name, 30) !== 1) {
+            $this->logger->error(
+                __FUNCTION__ . ' > the order is being processed by another request, order not changed: ', [
+                'order_id' => $this->order_id
+            ]);
+            return false;
+        }
+
+        try {
+            $this->changePaymentStatus();
+        } finally {
+            db_get_field('SELECT RELEASE_LOCK(?s)', $lock_name);
+        }
+
+        return true;
+    }
+
+
+    /**
+     * Lock name of the order: database locks are shared by all shops of the database server.
+     *
+     * @return string
+     */
+    private function getOrderLockName(): string
+    {
+        $shop = Registry::get('config.db_name') . '|' . Registry::get('config.table_prefix');
+
+        return 'payneteasy_' . substr(sha1($shop), 0, 16) . '_' . (int) $this->order_id;
     }
 
 
@@ -260,11 +288,15 @@ class Payneteasy
             ],
             'error' => [
                 'order_status' => $failed_status,
-                'reason_text' => trim($payment_status_data['error-message'])
+                'reason_text' => trim((string) ($payment_status_data['error-message'] ?? ''))
             ],
             'declined' => [
                 'order_status' => $failed_status,
-                'reason_text' => trim($payment_status_data['error-message'])
+                'reason_text' => trim((string) ($payment_status_data['error-message'] ?? ''))
+            ],
+            'filtered' => [
+                'order_status' => $failed_status,
+                'reason_text' => trim((string) ($payment_status_data['error-message'] ?? ''))
             ],
             'refunded' => [
                 'order_status' => 'E',
@@ -283,8 +315,12 @@ class Payneteasy
                 'currency' => $payment_status_data['currency'] ?? ''
             ]);
             // Keep the order visible to the merchant (Open), but not paid.
-            $current_order_status = $this->getCurrentOrderStatus()?:$this->order_info['status'];
-            if ($current_order_status !== $paid_status) {
+            $current_order_status = $this->getCurrentOrderStatus();
+            if (
+                !$this->isSettledStatus($current_order_status) &&
+                $current_order_status !== 'O' &&
+                $this->getAppliedOrderStatus() !== 'O'
+            ) {
                 $this->setOrUpdateOrderStatus([
                     'order_status' => 'O',
                     'reason_text' => 'Paid amount does not match the order'
@@ -315,13 +351,31 @@ class Payneteasy
 //            throw new PaynetException($context['reason_text'], $context);
 //        }
 
-        $current_order_status = $this->getCurrentOrderStatus()?:$this->order_info['status'];
+        // The order status is read again here, after the gateway has answered
+        $current_order_status = $this->getCurrentOrderStatus();
+        $applied_order_status = $this->getAppliedOrderStatus();
 
         // Never downgrade a paid order, except for a refund.
         if (
-            $current_order_status === $paid_status &&
+            ($this->isSettledStatus($current_order_status) || $applied_order_status === $paid_status) &&
             $payment_status !== 'approved' &&
             $payment_status !== 'refunded'
+        ) {
+            return;
+        }
+
+        // An order that is paid, or was moved further by the merchant
+        // (completed), is not moved back to the paid status.
+        if ($payment_status === 'approved' && $this->isSettledStatus($current_order_status)) {
+            return;
+        }
+
+        // A final result is applied once: later the merchant may move the order
+        // further (complete, cancel), a repeated request must not move it back.
+        if (
+            in_array($payment_status, ['approved', 'refunded'], true) &&
+            $applied_order_status === $order_status_data['order_status'] &&
+            !in_array($current_order_status, ['', OrderStatuses::INCOMPLETED, $failed_status], true)
         ) {
             return;
         }
@@ -347,55 +401,6 @@ class Payneteasy
                 'order_id' => $this->order_id
             ]);
         }
-    }
-
-
-    /**
-     * Sends a refund request to PAYNET, returns the result and logs the request and response data.
-     * If the request succeeds, the refund is also shown in the CMS.
-     *
-     * @return array
-     */
-    private function makeChargebackInPaynet(): array
-    {
-        // Logging input
-        $this->logger->debug(
-            __FUNCTION__ . ' > setRefunds - INPUT: ', [
-            'arguments' => [
-                'order_id' => $this->order_id
-            ]
-        ]);
-
-        $paynet_order_id = db_get_field('SELECT paynet_order_id FROM ?:payneteasy_payments WHERE merchant_order_id = ?s', $this->order_id);
-
-        $data = [
-            'login' => $this->processor_params['login'],
-            'client_orderid' => $this->order_id,
-            'orderid' => $paynet_order_id,
-            'comment' => 'Order cancel '
-        ];
-
-        $data['control'] = $this->signPaymentRequest($data, $this->endpoint_id, $this->control_key);
-
-        $action_url = $this->processor_params['live_url'];
-        if ($this->processor_params['sandbox'])
-            $action_url = $this->processor_params['sandbox_url'];
-
-        $response = $this->getPaynetApi()->return(
-            $data,
-            $this->processor_params['payment_method'],
-            $this->processor_params['sandbox'],
-            $action_url,
-            $this->processor_params['endpoint_id']
-        );
-
-        // Logging output
-        $this->logger->debug(
-            __FUNCTION__ . ' > setRefunds - OUTPUT: ', [
-            'response' => $response
-        ]);
-
-        return $response;
     }
 
 
@@ -496,6 +501,17 @@ class Payneteasy
     {
         try {
             $pay_url_response = $this->getPayUrl();
+
+            // A refused request (validation error, wrong settings) starts no
+            // payment: the order fails, there is nothing to wait for.
+            if (!ctype_digit(trim((string) ($pay_url_response['paynet-order-id'] ?? '')))) {
+                $reason_text = trim((string) ($pay_url_response['error-message'] ?? '')) ?: __('payneteasy_failed_get_payment_url');
+                throw new PaynetException($reason_text, [
+                    'order_status' => $this->processor_params['statuses']['failed'] ?? OrderStatuses::FAILED,
+                    'reason_text' => $reason_text
+                ]);
+            }
+
             $payment_status_data = $this->getPaymentStatusData($this->order_id);
             // Check if the payment link was successfully retrieved.
             if (empty($pay_url_response)) {
@@ -504,6 +520,16 @@ class Payneteasy
 
             $status = trim($payment_status_data['status'] ?? '');
 
+            // A card sale without a 3-D Secure page is usually finished within seconds:
+            // wait for its result, the customer does not come back through the gateway.
+            if ($this->processor_params['payment_method'] == 'direct') {
+                for ($attempt = 0; $attempt < 10 && $status === 'processing' && empty($payment_status_data['html']); $attempt++) {
+                    sleep(1);
+                    $payment_status_data = $this->getPaymentStatusData($this->order_id);
+                    $status = trim($payment_status_data['status'] ?? '');
+                }
+            }
+
             if ($status === 'processing') {
                 if ($this->processor_params['payment_method'] == 'form') {
                     fn_create_payment_form($pay_url_response['redirect-url'], [], 'Payneteasy', true, 'GET');
@@ -511,13 +537,15 @@ class Payneteasy
                     // 3-D Secure page from the gateway
                     echo $payment_status_data['html'];
                 } else {
-                    // Still in progress: the callback or the return sets the final status.
+                    // Still in progress: the order becomes visible to the merchant as open,
+                    // the callback sets the final status.
+                    $this->changePaymentStatusLocked();
                     fn_order_placement_routines('route', $this->order_id, false);
                 }
-            } elseif (in_array($status, ['approved', 'declined', 'error'], true)) {
+            } elseif (in_array($status, ['approved', 'declined', 'filtered', 'error'], true)) {
                 // Same rules as for the callback: configured statuses, amount check.
-                $this->changePaymentStatus();
-                $current_order_status = $this->getCurrentOrderStatus() ?: $this->order_info['status'];
+                $this->changePaymentStatusLocked();
+                $current_order_status = $this->getCurrentOrderStatus();
                 if ($current_order_status === $this->processor_params['statuses']['failed']) {
                     $this->unpleasantEnding(trim($payment_status_data['error-message'] ?? ''));
                 } else {
@@ -600,7 +628,8 @@ class Payneteasy
             'redirect_success_url' => $return_url,
             'redirect_fail_url' => $return_url,
             'redirect_url' => $return_url,
-            'server_callback_url' => $return_url,
+            // The gateway's own notification is answered at once, without a redirect.
+            'server_callback_url' => $this->getCallbackUrl(),
         ];
         $data['control'] = $this->signPaymentRequest($data, $this->processor_params['endpoint_id'], $this->processor_params['control_key']);
 
@@ -684,7 +713,7 @@ class Payneteasy
         // A failed notification (bad order id, foreign order, gateway or network
         // error) says nothing about the payment: only fail the order while
         // placing it, never from a notification request of any mode.
-        if (!defined('PAYMENT_NOTIFICATION')) {
+        if (!defined('PAYMENT_NOTIFICATION') && !$this->isOrderPaid()) {
             $this->setOrUpdateOrderStatus($pp_response);
         }
 
@@ -706,9 +735,33 @@ class Payneteasy
      */
     private function unpleasantEnding(string $reason_text): void
     {
-        fn_clear_cart(Tygh::$app['session']['cart']);
-        fn_set_notification('E', __('error'), $reason_text);
+        // The cart and the reason text belong to the customer of the order;
+        // any other visitor gets a general message.
+        if ($this->isOrderOfCurrentCustomer()) {
+            fn_clear_cart(Tygh::$app['session']['cart']);
+            fn_set_notification('E', __('error'), $reason_text);
+        } else {
+            fn_set_notification('E', __('error'), __('payneteasy_payment_failed'));
+        }
         fn_redirect(fn_url('', 'C', 'http'));
+    }
+
+
+    /**
+     * Whether the order was placed by the customer of the current session.
+     *
+     * @return bool
+     */
+    private function isOrderOfCurrentCustomer(): bool
+    {
+        // While the order is being placed it is always the customer's own order
+        if (!defined('PAYMENT_NOTIFICATION')) {
+            return true;
+        }
+
+        $auth = Tygh::$app['session']['auth'] ?? [];
+
+        return is_array($auth) && fn_is_order_allowed((int) $this->order_id, $auth);
     }
 
 
@@ -721,7 +774,7 @@ class Payneteasy
      */
     private function setOrUpdateOrderStatus(array $pp_response): void
     {
-        $current_order_status = $this->getCurrentOrderStatus()?:$this->order_info['status'];
+        $current_order_status = $this->getCurrentOrderStatus();
         $this->logger->debug(
             __FUNCTION__ . ' - INPUT: ', [
             'order_status' => $current_order_status,
@@ -742,14 +795,61 @@ class Payneteasy
 
 
     /**
-     * Gets the current order status
+     * Gets the current order status from the database and refreshes the order data
      *
      * @return string
      */
     private function getCurrentOrderStatus(): string
     {
           $this->setOrderInfo([]);
-          return $this->order_info['payment_info']['order_status'] ?? '';
+          return (string) db_get_field('SELECT status FROM ?:orders WHERE order_id = ?i', $this->order_id);
+    }
+
+
+    /**
+     * Gets the order status this plugin has set last (empty when it has set none)
+     *
+     * @return string
+     */
+    private function getAppliedOrderStatus(): string
+    {
+          return (string) ($this->order_info['payment_info']['order_status'] ?? '');
+    }
+
+
+    /**
+     * Whether the order has a paid status now
+     *
+     * @return bool
+     */
+    private function isOrderPaid(): bool
+    {
+          return $this->isSettledStatus(
+              (string) db_get_field('SELECT status FROM ?:orders WHERE order_id = ?i', $this->order_id)
+          );
+    }
+
+
+    /**
+     * Whether the status means that the order is paid: the paid status of the
+     * plugin settings or a status the shop counts as "payment received".
+     *
+     * @param string $status Order status
+     *
+     * @return bool
+     */
+    private function isSettledStatus(string $status): bool
+    {
+          if ($status === '') {
+              return false;
+          }
+
+          $settled_statuses = function_exists('fn_get_settled_order_statuses')
+              ? (array) fn_get_settled_order_statuses()
+              : [OrderStatuses::PAID, OrderStatuses::COMPLETE];
+
+          return $status === (string) ($this->processor_params['statuses']['paid'] ?? '')
+              || in_array($status, $settled_statuses, true);
     }
 
 
@@ -856,6 +956,17 @@ class Payneteasy
     private function getReturnUrl(): string
     {
         return fn_url('payment_notification.return?payment=payneteasy', 'C', 'current');
+    }
+
+
+    /**
+     * Generate and return the URL for the notification sent by the gateway itself.
+     *
+     * @return string The server callback URL.
+     */
+    private function getCallbackUrl(): string
+    {
+        return fn_url('payment_notification.webhook?payment=payneteasy', 'C', 'current');
     }
 
 
